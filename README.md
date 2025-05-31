@@ -1,4 +1,5 @@
  **KPI Forecasting & Energy-Saving Window Detection**
+
 This project forecasts network KPIs (Avg_UE_Number and DL_Prb_Utilization) using Random Forest and Prophet models and identifies energy-saving time windows based on configurable thresholds.
 
  **Input Data**
@@ -40,6 +41,6 @@ Prophet R² Score: Printed in console
 **Requirements**
 pandas, numpy, sklearn, prophet, matplotlib
 
-Run the Code
+**Run the Code**
 
 python forecast.py
