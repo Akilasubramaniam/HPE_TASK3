@@ -36,6 +36,7 @@ Saves all results as CSVs.
 
  **Evaluation**
 Random Forest R² Score: Printed in console
+
 Prophet R² Score: Printed in console
 
 **Requirements**
