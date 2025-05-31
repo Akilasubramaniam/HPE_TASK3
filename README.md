@@ -25,7 +25,7 @@ Window Size: Adjustable (default: 30 mins)
 **Outputs**
 6mo_KPI_RF_forecast.csv – 6-month forecast using Random Forest
 6mo_KPI_Prophet_forecast.csv – 6-month forecast using Prophet
-Energy_Saving_Windows_Moderate.csv – Filtered windows based on KPI thresholds
+
 
  **How It Works**
 Merges KPI data on timestamp & NCI.
