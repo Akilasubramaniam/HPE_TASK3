@@ -1,0 +1,122 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
+from prophet import Prophet
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore")
+
+# === CONFIGURABLE PARAMETERS ===
+ES_MODES = {
+    "Conservative": {"DL_Prb_Utilization": (0, 10), "Avg_UE_Number": (0, 10)},
+    "Moderate":     {"DL_Prb_Utilization": (0, 15), "Avg_UE_Number": (0, 13)},
+    "Aggressive":   {"DL_Prb_Utilization": (0, 20), "Avg_UE_Number": (0, 17)}
+}
+
+SELECTED_MODE = "Aggressive"   # Changeable by user
+WINDOW_MINUTES = 15           # Adjustable by user
+PLOT_RESULTS = False           # Set True to visualize forecasts per NCI
+
+# === Load Data ===
+df_ue = pd.read_csv("Avg_UE_Number_Data.csv", on_bad_lines='skip')
+df_dl = pd.read_csv("DL_Prb_Utilization_Data.csv", on_bad_lines='skip')
+
+# === Preprocess ===
+df_ue["Timestamp"] = pd.to_datetime(df_ue["Timestamp"], errors="coerce")
+df_dl["Timestamp"] = pd.to_datetime(df_dl["Timestamp"], errors="coerce")
+df_ue.dropna(subset=["Timestamp"], inplace=True)
+df_dl.dropna(subset=["Timestamp"], inplace=True)
+df = pd.merge(df_ue, df_dl, on=["Timestamp", "NCI", "gNB"], suffixes=('_UE', '_DL'))
+df["Timestamp"] = df["Timestamp"].dt.round("15min")
+df = df.groupby(["NCI", "Timestamp"], as_index=False).mean()
+
+# === Forecast Setup ===
+start_forecast = pd.Timestamp.now().floor("15min")
+end_forecast = start_forecast + pd.DateOffset(months=6)
+future_idx = pd.date_range(start=start_forecast, end=end_forecast, freq="15min")
+
+rf_results, prophet_results, rf_r2, prophet_r2 = [], [], [], []
+
+# === Forecasting ===
+for nci in df["NCI"].unique():
+    sub = df[df["NCI"] == nci].sort_values("Timestamp").set_index("Timestamp")
+    time_idx = np.arange(len(sub)).reshape(-1, 1)
+    future_time_idx = np.arange(len(sub), len(sub) + len(future_idx)).reshape(-1, 1)
+
+    for kpi in ["Avg_UE_Number", "DL_Prb_Utilization"]:
+        if kpi not in sub.columns:
+            continue
+
+        y = sub[kpi].values
+
+        # Random Forest
+        rf = RandomForestRegressor(n_estimators=100, random_state=42)
+        rf.fit(time_idx, y)
+        rf_r2.append(r2_score(y, rf.predict(time_idx)))
+        rf_pred = rf.predict(future_time_idx)
+        rf_results.append(pd.DataFrame({"Timestamp": future_idx, "NCI": nci, kpi: rf_pred}))
+
+        # Prophet
+        prophet_df = sub[[kpi]].reset_index().rename(columns={"Timestamp": "ds", kpi: "y"})
+        m = Prophet()
+        m.fit(prophet_df)
+        yhat = m.predict(prophet_df)[["ds", "yhat"]]
+        prophet_r2.append(r2_score(prophet_df["y"], yhat["yhat"]))
+        future = m.make_future_dataframe(periods=len(future_idx), freq="15min")
+        forecast = m.predict(future)[["ds", "yhat"]].tail(len(future_idx))
+        forecast = forecast.assign(NCI=nci).rename(columns={"ds": "Timestamp", "yhat": kpi})
+        prophet_results.append(forecast)
+
+# === Save Forecasts ===
+rf_df = pd.concat(rf_results).pivot_table(index=["Timestamp", "NCI"], values=["Avg_UE_Number", "DL_Prb_Utilization"]).reset_index()
+rf_df.to_csv("6mo_KPI_RF_forecast.csv", index=False)
+
+prophet_df = pd.concat(prophet_results).pivot_table(index=["Timestamp", "NCI"], values=["Avg_UE_Number", "DL_Prb_Utilization"]).reset_index()
+prophet_df.to_csv("6mo_KPI_Prophet_forecast.csv", index=False)
+
+print(f"Random Forest overall R²:  {np.mean(rf_r2):.4f}")
+print(f"Prophet overall R²:        {np.mean(prophet_r2):.4f}")
+
+# === Energy-Saving Detection Based on Mode ===
+lower_ue, upper_ue = ES_MODES[SELECTED_MODE]["Avg_UE_Number"]
+lower_dl, upper_dl = ES_MODES[SELECTED_MODE]["DL_Prb_Utilization"]
+
+filtered_df = rf_df[
+    (rf_df["Avg_UE_Number"] >= lower_ue) & (rf_df["Avg_UE_Number"] <= upper_ue) &
+    (rf_df["DL_Prb_Utilization"] >= lower_dl) & (rf_df["DL_Prb_Utilization"] <= upper_dl)
+]
+
+print(f"\n Found {len(filtered_df)} time points in range for mode '{SELECTED_MODE}'")
+
+print("\nForecasted KPI value ranges:")
+print(rf_df[["Avg_UE_Number", "DL_Prb_Utilization"]].describe())
+
+# === Optional Plot ===
+if PLOT_RESULTS:
+    for nci in rf_df["NCI"].unique():
+        sub = rf_df[rf_df["NCI"] == nci]
+        sub.plot(x="Timestamp", y=["DL_Prb_Utilization", "Avg_UE_Number"], title=f"NCI: {nci}")
+        plt.axhline(upper_ue, color='green', linestyle='--', label='UE Max')
+        plt.axhline(upper_dl, color='red', linestyle='--', label='DL Max')
+        plt.legend()
+        plt.show()
+
+# === Group 15-min Intervals and Extract Windows ===
+qualified_windows = []
+for nci in filtered_df["NCI"].unique():
+    nci_df = filtered_df[filtered_df["NCI"] == nci].sort_values("Timestamp")
+    nci_df["diff"] = nci_df["Timestamp"].diff().dt.total_seconds().div(60)
+    nci_df["group"] = (nci_df["diff"] != 15).cumsum()
+
+    for _, gdf in nci_df.groupby("group"):
+        if len(gdf) * 15 >= WINDOW_MINUTES:
+            qualified_windows.append(gdf[["Timestamp", "NCI", "Avg_UE_Number", "DL_Prb_Utilization"]])
+
+# === Save Energy-Saving Windows ===
+if qualified_windows:
+    final_df = pd.concat(qualified_windows)
+    final_df.to_csv(f"Energy_Saving_Windows_{SELECTED_MODE}.csv", index=False)
+    print(f"\nSaved energy-saving windows for mode: {SELECTED_MODE}")
+else:
+    print(f"\n No energy-saving windows found for mode '{SELECTED_MODE}' with minimum {WINDOW_MINUTES} mins duration.")
