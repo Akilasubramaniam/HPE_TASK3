@@ -35,9 +35,9 @@ Groups into continuous 15-min intervals and extracts those ≥ window size.
 Saves all results as CSVs.
 
  **Evaluation**
-Random Forest R² Score: Printed in console
+Random Forest R² Score
 
-Prophet R² Score: Printed in console
+Prophet R² Score
 
 **Requirements**
 pandas, numpy, sklearn, prophet, matplotlib
