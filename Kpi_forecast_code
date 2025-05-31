@@ -14,8 +14,8 @@ ES_MODES = {
     "Aggressive":   {"DL_Prb_Utilization": (0, 20), "Avg_UE_Number": (0, 17)}
 }
 
-SELECTED_MODE = "Aggressive"   # Changeable by user
-WINDOW_MINUTES = 15           # Adjustable by user
+SELECTED_MODE = "Conservative"   # Changeable by user
+WINDOW_MINUTES = 30           # Adjustable by user
 PLOT_RESULTS = False           # Set True to visualize forecasts per NCI
 
 # === Load Data ===
